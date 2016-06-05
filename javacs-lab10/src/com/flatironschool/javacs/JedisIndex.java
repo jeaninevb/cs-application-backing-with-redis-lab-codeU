@@ -67,8 +67,14 @@ public class JedisIndex {
 	 * @return Set of URLs.
 	 */
 	public Set<String> getURLs(String term) {
-        // FILL THIS IN!
-		return null;
+        
+        //Set<String> urlSet = new HashSet<String>();
+        String key = urlSetKey(term);
+    	
+    	Set<String> urls = jedis.smembers(key);
+    	
+    	return urls;
+        
 	}
 
     /**
@@ -78,10 +84,23 @@ public class JedisIndex {
 	 * @return Map from URL to count.
 	 */
 	public Map<String, Integer> getCounts(String term) {
-        // FILL THIS IN!
-		return null;
+        
+        String urlKey = urlSetKey(term);		
+		
+		Set<String> urlSet = getURLs(term);
+        Map<String, Integer> urlToCount = new HashMap<String, Integer>();
+        
+        for(String url: urlSet){
+        	
+        	Integer count = getCount(url, term);
+        	urlToCount.put(url, count);
+       	}
+        
+		return urlToCount;
+					
+        
 	}
-
+	
     /**
 	 * Returns the number of times the given term appears at the given URL.
 	 * 
@@ -89,11 +108,27 @@ public class JedisIndex {
 	 * @param term
 	 * @return
 	 */
+	 
 	public Integer getCount(String url, String term) {
-        // FILL THIS IN!
-		return null;
+		
+    	String urlKey = urlSetKey(term);
+		boolean flag = jedis.sismember(urlKey, url);
+    	
+    	if(flag){
+    	
+    		String counterKey = termCounterKey(url);
+    	
+    		//get map associated with appropriate TermCounter
+    		Map<String, String> data = jedis.hgetAll(counterKey);
+    	
+    		String numString = data.get(term);
+    		Integer count = new Integer(numString);
+    	
+    		return count;
+    	}
+    	return null;
 	}
-
+	
 
 	/**
 	 * Add a page to the index.
@@ -102,7 +137,18 @@ public class JedisIndex {
 	 * @param paragraphs  Collection of elements that should be indexed.
 	 */
 	public void indexPage(String url, Elements paragraphs) {
-        // FILL THIS IN!
+        
+        //proceed if no TermCounter exists for the given url
+        if(isIndexed(url) == false){
+        
+			TermCounter counter = new TermCounter(url.toString());
+			counter.processElements(paragraphs);
+		
+			//Push the contents of the TermCounter to Redis.
+			pushTermCounterToRedis(url, counter);
+		}
+		
+        
 	}
 
 	/**
@@ -215,6 +261,47 @@ public class JedisIndex {
 		t.exec();
 	}
 
+
+	//-------------------------------------
+ 	
+ 
+    /**
+     * Pushes the contents of the TermCounter to Redis.
+     */
+    public void pushTermCounterToRedis(String url, TermCounter tc) {
+    
+    	String counterKey = termCounterKey(url);
+    	    	
+    	Set<String> termSet = tc.keySet();
+    	
+    	
+    	Transaction t = jedis.multi();
+    	
+    	for(String term: termSet){
+    	
+    		//TERMCOUNTER
+    	
+    		Integer termCount = tc.get(term);
+    		//Redis TermCounter hash : ("TermCounter:url", String term, String counts)
+    		t.hset(counterKey, term, Integer.toString(termCount));
+    		
+    		
+    		//URLSET
+    		
+    		String urlKey = urlSetKey(term);
+    		t.sadd(urlKey, url);
+    		
+    	}
+    	
+    	t.exec();
+    	
+    	
+    }
+
+
+	//-------------------------------------
+
+
 	/**
 	 * @param args
 	 * @throws IOException 
@@ -223,9 +310,9 @@ public class JedisIndex {
 		Jedis jedis = JedisMaker.make();
 		JedisIndex index = new JedisIndex(jedis);
 		
-		//index.deleteTermCounters();
-		//index.deleteURLSets();
-		//index.deleteAllKeys();
+		index.deleteTermCounters();
+		index.deleteURLSets();
+		index.deleteAllKeys();
 		loadIndex(index);
 		
 		Map<String, Integer> map = index.getCounts("the");
